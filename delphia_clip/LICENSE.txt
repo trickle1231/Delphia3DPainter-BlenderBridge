@@ -1,0 +1,37 @@
+Delphia Clipboard
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This add-on is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This add-on is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this add-on in COPYING.txt. If not, see
+https://www.gnu.org/licenses/.
+
+Source distribution
+-------------------
+The accompanying __init__.py, transfer.py and textures.py are the complete preferred
+form for modifying this add-on. No compilation or generated binary is
+required. Installation instructions are in README.rst.
+
+Scope
+-----
+This notice covers the Delphia Clipboard add-on files in this package.
+Blender is obtained separately; this package does not include Blender,
+its FBX exporter, or a Delphia application executable. Exported models
+remain subject to the rights of their respective owners.
+
+Receiving this add-on does not grant a paid license to Delphia. Any terms
+governing the separate Delphia application do not restrict recipients'
+rights under the GPL for this add-on. Recipients may redistribute this
+add-on, including modified copies, in accordance with the GPL.
+
+This is an independent integration and is not endorsed by the Blender
+Foundation. Blender is a trademark of the Blender Foundation.
