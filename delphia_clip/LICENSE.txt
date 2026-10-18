@@ -17,7 +17,7 @@ https://www.gnu.org/licenses/.
 
 Source distribution
 -------------------
-The accompanying __init__.py, transfer.py and textures.py are the complete preferred
+The accompanying __init__.py, transfer.py, textures.py, dialogs.py, material_nodes.py and help_ui.py are the complete preferred
 form for modifying this add-on. No compilation or generated binary is
 required. Installation instructions are in README.rst.
 

@@ -11,16 +11,32 @@ spec.loader.exec_module(transfer)
 
 
 class TransferTest(unittest.TestCase):
+    def test_size_limit_preserves_previous_transfer(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            transfer.publish(lambda p: p.write_bytes(b'old'), lambda _: None, root)
+            limit = transfer.MAX_MODEL_BYTES
+            try:
+                transfer.MAX_MODEL_BYTES = 4
+                with self.assertRaisesRegex(RuntimeError, '512 MiB'):
+                    transfer.publish(lambda p: p.write_bytes(b'large'), lambda _: None, root)
+                self.assertEqual((root / 'latest.fbx').read_bytes(), b'old')
+            finally:
+                transfer.MAX_MODEL_BYTES = limit
+
     def test_replace_and_rollback(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / 'bridge'
             clipboard = []
             transfer.publish(lambda p: p.write_bytes(b'first'), clipboard.append, root)
-            transfer.publish(lambda p: p.write_bytes(b'second'), clipboard.append, root)
+            self.assertTrue(json.loads(clipboard[-1][len(transfer.PREFIX):])['include_textures'])
+            transfer.publish(lambda p: p.write_bytes(b'second'), clipboard.append, root, addon_version='1.0.1', include_textures=False)
             self.assertEqual((root / 'latest.fbx').read_bytes(), b'second')
             payload = json.loads(clipboard[-1][len(transfer.PREFIX):])
             self.assertEqual(payload['size'], 6)
             self.assertEqual(payload['version'], 1)
+            self.assertEqual(payload['addon_version'], '1.0.1')
+            self.assertFalse(payload['include_textures'])
             def fail(_):
                 raise RuntimeError('test failure')
             with self.assertRaises(RuntimeError):

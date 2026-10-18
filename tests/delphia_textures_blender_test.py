@@ -7,10 +7,11 @@ import bpy
 sys.path.insert(0, str(Path(__file__).parents[1]))
 import delphia_clip
 from delphia_clip.textures import apply_textures, PREFIX
+from delphia_clip.material_nodes import node_tree
 
 delphia_clip.register()
 material = bpy.data.materials.new('Bridge Test')
-material.use_nodes = True
+assert node_tree(material, create=True) is not None
 material['delphia_id'] = 'test-identity'
 shader = next(n for n in material.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
 with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
@@ -23,7 +24,10 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     entry = dict(name='renamed original', id='test-identity', channels=dict(albedo=info, emission=info))
     manifest = dict(version=1, directory=folder, materials=[entry])
     text = PREFIX + json.dumps(manifest)
-    assert apply_textures(text) == (2, 0)
+    progress_values = []
+    assert apply_textures(text, progress=progress_values.append) == (2, 0)
+    assert progress_values and progress_values[-1] == 100
+    assert progress_values == sorted(progress_values)
     count = len(bpy.data.images)
     assert apply_textures(text) == (2, 0)
     assert len(bpy.data.images) == count
@@ -32,6 +36,11 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     emission = shader.inputs.get('Emission Color') or shader.inputs.get('Emission')
     assert emission.is_linked
     assert emission.links[0].from_node.image.packed_file
+    albedo_node = shader.inputs['Base Color'].links[0].from_node
+    emission_node = emission.links[0].from_node
+    assert albedo_node.location.x < shader.location.x
+    assert emission_node.location.x < shader.location.x
+    assert albedo_node.location != emission_node.location
     # ID-free local imports use exact names; duplicate IDs are never guessed.
     entry['id'] = ''
     entry['name'] = material.name
@@ -45,17 +54,6 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     records = []
     assert apply_textures(text, records) == (2, 0)
     assert len(records) == 2
-    delphia_clip.show_replaced(bpy.context, records)
-    items = bpy.context.window_manager.delphia_replaced
-    keep = delphia_clip.replacement_image(items[0])
-    keep.use_fake_user = True
-    remove_name = items[1].image_name
-    for item in items:
-        item.selected = True
-    assert bpy.ops.delphia.review_replaced() == {'FINISHED'}
-    assert bpy.data.images.get(remove_name) is None
-    assert bpy.data.images.get(keep.name) == keep
-    keep.use_fake_user = False
     # Shared image node must not have its image replaced for other consumers.
     other = material.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
     material.node_tree.links.new(node.outputs['Color'], other.inputs['Base Color'])
@@ -68,10 +66,6 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     records = []
     assert apply_textures(text, records) == (2, 0)
     assert shader.inputs['Alpha'].links[0].from_node.image == shader.inputs['Base Color'].links[0].from_node.image
-    delphia_clip.show_replaced(bpy.context, records)
-    retained = {i.identity for i in bpy.context.window_manager.delphia_replaced}
-    delphia_clip.show_replaced(bpy.context, [])
-    assert retained == {i.identity for i in bpy.context.window_manager.delphia_replaced}
     # Inject failure after mutations, verifying links, images and image count.
     import delphia_clip.textures as textures
     original_apply = textures._apply_textures

@@ -1,9 +1,9 @@
-Delphia Clipboard 1.1
+Delphia Clipboard 1.0.1
 ====================
 
 Installation
 ------------
-Install DelphiaClipboard.zip as a legacy add-on from Blender Preferences
+Install the versioned ``DelphiaClipboard-<version>.zip`` file as a legacy add-on from Blender Preferences
 (Add-ons / Install from Disk; exact wording varies by Blender version).
 Enable Delphia Clipboard. In Object Mode select meshes, then use
 Object > Copy to Delphia, or search for Copy to Delphia with F3.
@@ -14,18 +14,19 @@ Delphia tab. This integration remains a free feature; no Pro gate is added.
 Return textures
 ---------------
 In Delphia choose File > Send Textures to Blender. Before closing Delphia,
-press Update Textures from Delphia in Blender's Delphia sidebar. Alternatively
-use Import Texture Manifest and select manifest.json in the temporary
-DelphiaTextures-* directory. This transfers bound Albedo and Emission canvases.
+press Update Textures from Delphia in Blender's Delphia sidebar.
+If the clipboard has changed, send textures from Delphia again.
+This transfers bound Albedo and Emission canvases.
 Each successful send replaces this Delphia instance's previous transfer;
 normal application shutdown removes it. Crashes can leave temporary files.
 
-Sending meshes assigns local editable materials a delphia_id custom property.
+Sending meshes does not modify materials, nodes, slots or custom properties.
+Existing delphia_id custom properties are read if present.
 The name-to-ID map travels with the model and is retained in DPP projects.
 When an ID is duplicated, an exact material name must disambiguate it; existing
 IDs are not regenerated on export. Only transfers without IDs
 fall back to an exact material name. Missing materials are skipped, not created.
-Keep the original Blender scene, or save it to preserve these material IDs.
+Keep the original Blender scene for material matching.
 
 The active Material Output must connect directly to a Principled shader.
 Base Color and Emission / Emission Color are detected by socket name for
@@ -57,13 +58,27 @@ Compatibility
 -------------
 Targets Blender 3.3 and later with the bundled FBX exporter. Optional export
 properties are detected through RNA; required properties are checked before
-exporting. Only Blender 4.2.8 LTS has been runtime-tested in this workspace.
-No claim of testing every 3.x/4.x/5.x version. This is a legacy add-on ZIP,
-not an Extensions repository package.
+exporting. Runtime tests currently pass on Blender 3.6.23, 4.2.8 LTS, 4.5.0
+and 5.0.0 (model transfer, texture import, mapping and cleanup). The bridge
+does not read Material.use_nodes, which Blender plans to remove in 6.0; its
+pre-5.0 fallback uses the property only when a material has no node tree.
+Blender 6.x still requires runtime testing before it is declared supported.
+This is a legacy add-on ZIP, not an Extensions repository package.
 
 Selected mesh objects are exported with modifiers, UVs, material assignments,
-and transforms. Animation and rigs are not exported. FBX-supported image
-textures are embedded. Procedural shader graphs are not baked or reproduced.
+and transforms, including all vertex color sets. Animation and rigs are not exported.
+Image textures are never packed or copied with the model. The standard FBX
+exporter can retain texture path references, but Delphia does not load them
+automatically. Materials and node connections are not modified.
+Use Copy Texture in the sidebar to preview material images from selected objects.
+Each row has a Copy button which copies one image to the system clipboard;
+paste it using Delphia's existing layer-panel image paste command.
+This uses Blender's native image clipboard operator and requires a Blender/platform
+combination that supports it. There is no shader baking or multi-image copy.
+For standalone FBX/OBJ files, use Import Model Texture in Delphia's bottom
+layer-panel dropdown. Select one image to add a canvas-sized top-level layer.
+Original model textures are not cached in Delphia or stored separately in DPP;
+only the imported layer is saved. Use the model file again for another import.
 No clipboard paste shortcut is overridden. Delphia opens a new model using
 its existing save-confirmation/import workflow, not an append operation.
 
@@ -91,13 +106,20 @@ blender --background --factory-startup --python-exit-code 1 --python tests/delph
 Tests use isolated temporary directories and do not overwrite the real bridge
 clipboard or user preferences. Delphia's blender_clip CTest must be built and
 run separately; source inspection alone is not an end-to-end integration test.
-Replacement review
-------------------
+Material mapping and unused images (1.2)
+---------------------------------------
 
-After texture assignment, Replaced Textures opens a scrollable list of the old
-images. Select unused images and confirm to remove their Blender datablocks;
-source files on disk are never deleted. Images still used elsewhere, linked
-library images and Fake User images are protected. Nothing is selected by
-default. Cancel keeps all images. The Delphia sidebar can reopen the accumulated
-replacement list. This review list is temporary and is not saved in the blend.
+Unique supported ID matches apply automatically. Otherwise Texture Mapping opens
+with Texture / Material / Status columns. Names provide review candidates only.
+Choose any local material manually, or Unassigned to skip. Conflicting assignments
+to the same material/channel and unsupported node graphs block application.
+Cancelling the mapping dialog leaves the materials unchanged. Transfer files must
+remain available until application finishes.
 
+The sidebar's Unused Textures button replaces the old replacement-history popup.
+It lists unused images from the entire Blender project, with a large preview of
+the active entry. Select checkboxes and Delete Selected to remove image datablocks
+after confirmation. Source files are never deleted. Usage is checked again at
+deletion time. Fake User and linked-library images are shown but protected.
+Closing the popup does not undo an already confirmed deletion; use Blender Undo.
+The add-on UI is English.

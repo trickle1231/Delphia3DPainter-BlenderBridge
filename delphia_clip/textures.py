@@ -6,20 +6,36 @@ import struct
 from pathlib import Path
 import tempfile
 import bpy
+from .material_nodes import node_tree, restore_pre_node_material, node_usage_state
 
 PREFIX = 'DELPHIA_TEXTURE_CLIP_V1\n'
 
 
-def apply_textures(text, replaced=None):
+def place_added_texture_node(tree, node, shader, channel):
+    """Place only nodes created by this importer; never move user nodes."""
+    x = shader.location.x - 320
+    y = shader.location.y if channel == 'albedo' else shader.location.y - 260
+    existing = [other for other in tree.nodes if other != node and other.type == 'TEX_IMAGE']
+    for _ in range(len(existing) + 1):
+        # Texture node dimensions are stable enough for a conservative layout.
+        overlaps = any(abs(other.location.x - x) < 250 and abs(other.location.y - y) < 210
+                       for other in existing)
+        if not overlaps:
+            break
+        y -= 260
+    node.location = (x, y)
+
+
+def apply_textures(text, replaced=None, progress=None):
     # Keep originals alive until the entire operation commits. Restore existing
     # node objects (rather than swapping node trees) so external references survive.
     states = []
     for mat in bpy.data.materials:
         if mat.library:
             continue
-        tree = mat.node_tree
+        tree = node_tree(mat)
         nodes = list(tree.nodes) if tree else []
-        states.append((mat, mat.use_nodes, nodes,
+        states.append((mat, tree is not None, node_usage_state(mat), nodes,
                        [(n, n.image, n.label) for n in nodes if n.type == 'TEX_IMAGE'],
                        [(l.from_socket, l.to_socket) for l in tree.links] if tree else [],
                        [(s, s.default_value) for n in nodes if n.type == 'BSDF_PRINCIPLED'
@@ -27,10 +43,10 @@ def apply_textures(text, replaced=None):
     images = {i.as_pointer() for i in bpy.data.images}
     records = []
     try:
-        result = _apply_textures(text, records)
+        result = _apply_textures(text, records, progress) if progress else _apply_textures(text, records)
     except Exception:
-        for mat, enabled, nodes, old_images, links, strengths in states:
-            tree = mat.node_tree
+        for mat, had_node_tree, use_nodes, nodes, old_images, links, strengths in states:
+            tree = node_tree(mat)
             if tree:
                 tree.links.clear()
                 for node in list(tree.nodes):
@@ -42,7 +58,7 @@ def apply_textures(text, replaced=None):
                     tree.links.new(source, target)
                 for socket, value in strengths:
                     socket.default_value = value
-            mat.use_nodes = enabled
+            restore_pre_node_material(mat, had_node_tree, use_nodes)
         for image in list(bpy.data.images):
             if image.as_pointer() not in images and image.users == 0:
                 bpy.data.images.remove(image)
@@ -57,7 +73,7 @@ def apply_textures(text, replaced=None):
     return result
 
 
-def _apply_textures(text, replaced):
+def _apply_textures(text, replaced, progress=None):
     if len(text) > 4 * 1024 * 1024 or not text.startswith(PREFIX):
         raise ValueError('Copy textures from Delphia first')
     manifest = json.loads(text[len(PREFIX):])
@@ -73,6 +89,13 @@ def _apply_textures(text, replaced):
     # Validate every file before touching the user's scene. Retain bytes while
     # loading, so a concurrently replaced transfer cannot change packed data.
     files = {}
+    total_steps = max(1, sum(len(entry['channels']) for entry in entries) * 3)
+    completed_steps = 0
+    def advance():
+        nonlocal completed_steps
+        completed_steps += 1
+        if progress:
+            progress(min(99, 100 * completed_steps / total_steps))
     total_bytes = 0
     decoded_bytes = 0
     for entry in entries:
@@ -98,6 +121,7 @@ def _apply_textures(text, replaced):
             if not width or not height or max(width, height) > 16384 or decoded_bytes > 1024*1024*1024:
                 raise ValueError('Texture transfer exceeds the memory safety limit')
             files[name] = data
+            advance()
     # Decode all inputs before changing material links.
     with tempfile.TemporaryDirectory(prefix='DelphiaTextureRead-') as folder:
         for name, data in files.items():
@@ -109,6 +133,7 @@ def _apply_textures(text, replaced):
                     raise ValueError('Could not decode texture')
             finally:
                 bpy.data.images.remove(probe)
+            advance()
     applied = skipped = 0
     for entry in entries:
         identity = entry.get('id', '')
@@ -121,9 +146,10 @@ def _apply_textures(text, replaced):
             skipped += 1
             continue
         material = matches[0]
-        if not material.use_nodes:
-            material.use_nodes = True
-        tree = material.node_tree
+        tree = node_tree(material, create=True)
+        if tree is None:
+            skipped += 1
+            continue
         outputs = [n for n in tree.nodes if n.type == 'OUTPUT_MATERIAL' and n.is_active_output]
         if len(outputs) != 1 or len(outputs[0].inputs['Surface'].links) != 1:
             skipped += 1
@@ -148,6 +174,7 @@ def _apply_textures(text, replaced):
             info = entry['channels'][channel]
             # Reuse the connected image node but never overwrite its old image
             # datablock: it may also be used by an unrelated material.
+            created = not socket.is_linked
             node = socket.links[0].from_node if socket.is_linked else tree.nodes.new('ShaderNodeTexImage')
             previous = node.image
             alpha = shader.inputs.get('Alpha')
@@ -157,12 +184,15 @@ def _apply_textures(text, replaced):
             if len(node.outputs['Color'].links) > 1 or shared_alpha:
                 original = node
                 node = tree.nodes.new('ShaderNodeTexImage')
+                created = True
                 node.interpolation = original.interpolation
                 node.extension = original.extension
                 node.projection = original.projection
                 node.projection_blend = original.projection_blend
                 if original.inputs['Vector'].is_linked:
                     tree.links.new(original.inputs['Vector'].links[0].from_socket, node.inputs['Vector'])
+            if created:
+                place_added_texture_node(tree, node, shader, channel)
             old = node.image
             # Load from an isolated file to avoid race-with-export; pack before
             # the temporary file is removed. No source texture is overwritten.
@@ -188,4 +218,7 @@ def _apply_textures(text, replaced):
             elif old and old.get('delphia_owned') and old.users == 0:
                 bpy.data.images.remove(old)
             applied += 1
+            advance()
+    if progress:
+        progress(100)
     return applied, skipped

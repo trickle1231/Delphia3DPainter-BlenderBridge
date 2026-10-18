@@ -10,6 +10,7 @@ import tempfile
 from contextlib import contextmanager
 
 PREFIX = 'DELPHIA_BLENDER_CLIP_V1\n'
+MAX_MODEL_BYTES = 512 * 1024 * 1024
 
 
 @contextmanager
@@ -37,7 +38,7 @@ def writer_lock(root):
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def publish(export, set_clipboard, root=None, materials=None):
+def publish(export, set_clipboard, root=None, materials=None, addon_version=None, include_textures=True):
     root = Path(root) if root is not None else Path(tempfile.gettempdir()) / 'DelphiaBlenderClip-v1'
     if root.is_symlink() or root.resolve() != root.absolute():
         raise RuntimeError('Clipboard directory must not be a symbolic link')
@@ -63,14 +64,17 @@ def publish(export, set_clipboard, root=None, materials=None):
             export(model)
             if not model.is_file() or model.stat().st_size == 0:
                 raise RuntimeError('Exporter did not create a model')
+            if model.stat().st_size > MAX_MODEL_BYTES:
+                raise RuntimeError('Model exceeds the Delphia import limit (512 MiB)')
             with model.open('rb') as stream:
                 sha = hashlib.sha256()
                 for block in iter(lambda: stream.read(1024 * 1024), b''):
                     sha.update(block)
             payload = PREFIX + json.dumps(dict(version=1, format='fbx', path=str(latest),
                                                sha256=sha.hexdigest(), size=model.stat().st_size,
-                                               materials=materials or {}))
-            if len(payload) > 16384 or model.stat().st_size > 2*1024*1024*1024:
+                                               materials=materials or {},
+                                               addon_version=addon_version, include_textures=bool(include_textures)))
+            if len(payload) > 16384 or model.stat().st_size > MAX_MODEL_BYTES:
                 raise RuntimeError('Model transfer exceeds the safety limit')
             if latest.exists():
                 os.replace(latest, backup)

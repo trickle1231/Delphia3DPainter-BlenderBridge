@@ -1,5 +1,6 @@
 """blender --background --factory-startup --python this_file"""
 import sys
+import json
 import tempfile
 from pathlib import Path
 import bpy
@@ -25,6 +26,7 @@ with tempfile.TemporaryDirectory() as folder:
     path = Path(folder) / 'bridge' / 'latest.fbx'
     assert path.read_bytes().startswith(b'Kaydara FBX Binary')
     assert captured and captured[-1].startswith(transfer.PREFIX)
+    assert json.loads(captured[-1][len(transfer.PREFIX):])['include_textures'] is False
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete(use_global=False)
     bpy.ops.import_scene.fbx(filepath=str(path))
