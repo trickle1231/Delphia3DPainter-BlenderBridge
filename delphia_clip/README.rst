@@ -1,4 +1,4 @@
-Delphia Clipboard 1.0.1
+Delphia Clipboard 1.0.2
 ====================
 
 Installation
@@ -11,9 +11,18 @@ In Delphia use File > Open by BlenderClip.
 The same model-send button is available in the 3D Viewport N sidebar's
 Delphia tab. This integration remains a free feature; no Pro gate is added.
 
+Files containing an armature show a confirmation before export: meshes are
+sent in their current pose. Cancel and switch to Rest Position before exporting
+if a neutral pose is desired. The bridge never changes pose or creates rest-pose
+copies. Only static meshes are transferred, not bones, cameras, lights or animation.
+Particles and modifier evaluation follow Blender's FBX exporter behavior under
+the bridge's mesh-only, apply-modifiers export options. The bridge does not filter
+particle instances or patch the exporter. Particle-generated meshes may be included.
+
 Return textures
 ---------------
-In Delphia choose File > Send Textures to Blender. Before closing Delphia,
+In Delphia use Copy to Blender for the current canvas, or Copy Selected to
+Blender in the image export dialog for multiple canvases. Before closing Delphia,
 press Update Textures from Delphia in Blender's Delphia sidebar.
 If the clipboard has changed, send textures from Delphia again.
 This transfers bound Albedo and Emission canvases.
@@ -23,9 +32,9 @@ normal application shutdown removes it. Crashes can leave temporary files.
 Sending meshes does not modify materials, nodes, slots or custom properties.
 Existing delphia_id custom properties are read if present.
 The name-to-ID map travels with the model and is retained in DPP projects.
-When an ID is duplicated, an exact material name must disambiguate it; existing
-IDs are not regenerated on export. Only transfers without IDs
-fall back to an exact material name. Missing materials are skipped, not created.
+Existing IDs are not regenerated on export. Texture Mapping offers ID or name
+matches for review and allows explicit material selection or Unassigned.
+Missing materials are not created automatically.
 Keep the original Blender scene for material matching.
 
 The active Material Output must connect directly to a Principled shader.
@@ -34,8 +43,10 @@ different Blender versions. Existing direct image nodes are reused; shared
 nodes are separated before assigning a new image. Other shader graphs are
 skipped, not deleted. Existing image source files are never overwritten.
 Imported images are sRGB and packed in the .blend (save the .blend to persist).
-An existing direct Albedo-image Alpha connection to the same shader is updated
-alongside color; unrelated Alpha connections are preserved. No shader baking or emission-strength synchronization
+Albedo-image Alpha is connected when the shader Alpha input is unlinked or
+already uses that image node's Alpha; unrelated Alpha connections are preserved.
+Material transparency/render settings are not changed automatically.
+No shader baking or emission-strength synchronization
 is performed; an unlinked zero emission strength is raised to one.
 UV transforms already present on a reused node are preserved. Delphia-only
 UV offset/scale changes are not transferred by this first protocol version.
@@ -106,17 +117,21 @@ blender --background --factory-startup --python-exit-code 1 --python tests/delph
 Tests use isolated temporary directories and do not overwrite the real bridge
 clipboard or user preferences. Delphia's blender_clip CTest must be built and
 run separately; source inspection alone is not an end-to-end integration test.
-Material mapping and unused images (1.2)
----------------------------------------
+Material mapping and unused images
+---------------------------------
 
-Unique supported ID matches apply automatically. Otherwise Texture Mapping opens
-with Texture / Material / Status columns. Names provide review candidates only.
+Texture Mapping opens with Texture / Material / Status columns so users can
+review ID matches, name suggestions, and remembered manual assignments.
 Choose any local material manually, or Unassigned to skip. Conflicting assignments
 to the same material/channel and unsupported node graphs block application.
 Cancelling the mapping dialog leaves the materials unchanged. Transfer files must
 remain available until application finishes.
 
-The sidebar's Unused Textures button replaces the old replacement-history popup.
+Manual assignments are remembered in the scene; save the .blend to retain them.
+Remove Replaced Images (Packed Only) is off by default and optionally removes
+unused replaced packed images. Fake User and linked-library images are protected.
+
+The sidebar's Unused Images button opens the cleanup popup.
 It lists unused images from the entire Blender project, with a large preview of
 the active entry. Select checkboxes and Delete Selected to remove image datablocks
 after confirmation. Source files are never deleted. Usage is checked again at

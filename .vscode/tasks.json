@@ -3,6 +3,7 @@
   "tasks": [
     {
       "label": "Package Blender Add-on ZIP",
+      "hide": true,
       "type": "shell",
       "command": "python",
       "args": ["package_addon.py"],

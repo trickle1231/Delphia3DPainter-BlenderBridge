@@ -2,7 +2,7 @@
 # This add-on is distributed without warranty; see COPYING.txt and LICENSE.txt.
 bl_info = {
     "name": "Delphia Clipboard", "author": "Delphia",
-    "version": (1, 0, 1), "blender": (3, 3, 0),
+    "version": (1, 0, 2), "blender": (3, 3, 0),
     "location": "3D View > Sidebar > Delphia", "category": "Import-Export",
     "description": "Send selected meshes to Delphia through a versioned clipboard reference",
 }
@@ -14,16 +14,51 @@ from . import dialogs
 from . import copy_texture
 from .help_ui import DELPHIA_OT_help
 
+_POSE_WARNING = 'This file contains an armature. Meshes will be exported in their current pose.'
+_POSE_RECOMMENDATION = 'Recommended: cancel, switch the armature to Rest Position, then export again.'
+_POSE_UNCHANGED = 'Continuing does not change the original pose. Bones and animation are not exported.'
+_POSE_TRANSLATIONS = {
+    'ko_KR': {('*', _POSE_WARNING): '아마추어가 포함된 파일입니다. 메시가 현재 포즈 그대로 내보내집니다.',
+              ('*', _POSE_RECOMMENDATION): '취소 후 아마추어를 Rest Position으로 변경하고 다시 내보내는 것을 권장합니다.',
+              ('*', _POSE_UNCHANGED): '계속해도 원본 포즈는 변경하지 않습니다. 본과 애니메이션은 전송하지 않습니다.'},
+    'ja_JP': {('*', _POSE_WARNING): 'アーマチュアが含まれています。現在のポーズでメッシュを出力します。',
+              ('*', _POSE_RECOMMENDATION): 'キャンセルしてレストポジションに切り替え、再度出力することを推奨します。',
+              ('*', _POSE_UNCHANGED): '続行しても元のポーズは変更しません。ボーンとアニメーションは出力しません。'},
+}
+
+def has_armature():
+    return any(obj.type == 'ARMATURE' for obj in bpy.data.objects)
+
 class DELPHIA_OT_copy(bpy.types.Operator):
     bl_idname = "delphia.copy_models"
     bl_label = "Copy to Delphia"
     bl_description = "Export selected mesh objects for File > Open by BlenderClip in Delphia"
+    pose_warning_accepted: bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
         return context.mode == 'OBJECT' and any(o.type == 'MESH' for o in context.selected_objects)
 
+    def invoke(self, context, event):
+        self.pose_warning_accepted = False
+        if has_armature():
+            # execute is called only after OK; cancellation never starts export.
+            self.pose_warning_accepted = True
+            return context.window_manager.invoke_props_dialog(self, width=700)
+        return self.execute(context)
+
+    def draw(self, context):
+        self.layout.label(text=_POSE_WARNING, icon='ERROR')
+        self.layout.label(text=_POSE_RECOMMENDATION)
+        self.layout.label(text=_POSE_UNCHANGED)
+
     def execute(self, context):
+        accepted = self.pose_warning_accepted
+        self.pose_warning_accepted = False
+        if has_armature() and not accepted:
+            self.report({'WARNING'}, bpy.app.translations.pgettext_iface(_POSE_WARNING) + ' ' +
+                        bpy.app.translations.pgettext_iface(_POSE_RECOMMENDATION))
+            return {'CANCELLED'}
         try:
             try:
                 properties = bpy.ops.export_scene.fbx.get_rna_type().properties
@@ -118,6 +153,7 @@ def menu(self, context):
 
 
 def register():
+    bpy.app.translations.register(__name__, _POSE_TRANSLATIONS)
     bpy.utils.register_class(DELPHIA_OT_help)
     dialogs.register()
     copy_texture.register()
@@ -127,6 +163,7 @@ def register():
 
 
 def unregister():
+    bpy.app.translations.unregister(__name__)
     bpy.utils.unregister_class(DELPHIA_OT_help)
     bpy.types.VIEW3D_MT_object.remove(menu)
     for cls in (DELPHIA_PT_bridge, DELPHIA_OT_textures, DELPHIA_OT_copy):

@@ -11,19 +11,59 @@ from .material_nodes import node_tree, restore_pre_node_material, node_usage_sta
 PREFIX = 'DELPHIA_TEXTURE_CLIP_V1\n'
 
 
+def _node_position(node):
+    """Resolve nested frame-relative locations into node-tree coordinates."""
+    x, y = node.location
+    parent = node.parent
+    while parent is not None:
+        x += parent.location.x
+        y += parent.location.y
+        parent = parent.parent
+    return float(x), float(y)
+
+
+def _node_bounds(node, location=None):
+    """Return a conservative node-editor rectangle: left, bottom, right, top."""
+    point = _node_position(node) if location is None else location
+    # ``dimensions`` reflects the UI's true size after it has been drawn;
+    # width/height provide a safe estimate in headless/background Blender.
+    dimensions = getattr(node, 'dimensions', ())
+    actual_width = float(dimensions[0]) if len(dimensions) > 0 else 0.0
+    actual_height = float(dimensions[1]) if len(dimensions) > 1 else 0.0
+    width = max(actual_width, float(getattr(node, 'width', 0) or 0), 240.0)
+    # New image nodes have not been drawn yet; reserve room for their controls
+    # and the image selector that appears after assignment.
+    minimum_height = 360.0 if node.type == 'TEX_IMAGE' else 180.0
+    height = max(actual_height, float(getattr(node, 'height', 0) or 0), minimum_height)
+    left, top = float(point[0]), float(point[1])
+    return left, top - height, left + width, top
+
+
+def _bounds_overlap(first, second, padding=32.0):
+    return not (first[2] + padding <= second[0] or second[2] + padding <= first[0]
+                or first[3] + padding <= second[1] or second[3] + padding <= first[1])
+
+
 def place_added_texture_node(tree, node, shader, channel):
-    """Place only nodes created by this importer; never move user nodes."""
-    x = shader.location.x - 320
-    y = shader.location.y if channel == 'albedo' else shader.location.y - 260
-    existing = [other for other in tree.nodes if other != node and other.type == 'TEX_IMAGE']
-    for _ in range(len(existing) + 1):
-        # Texture node dimensions are stable enough for a conservative layout.
-        overlaps = any(abs(other.location.x - x) < 250 and abs(other.location.y - y) < 210
-                       for other in existing)
-        if not overlaps:
-            break
-        y -= 260
-    node.location = (x, y)
+    """Put a newly imported texture in a free slot without moving user nodes."""
+    node_width = _node_bounds(node)[2] - _node_bounds(node)[0]
+    # Keep the texture immediately left of its shader when possible.  Node
+    # locations are their upper-left corners, so account for its full width.
+    shader_x, shader_y = _node_position(shader)
+    x = shader_x - node_width - 64.0
+    y = shader_y - (0.0 if channel == 'albedo' else 260.0)
+    # Include frames and their children, all in the same coordinate system.
+    occupied = [_node_bounds(other) for other in tree.nodes
+                if other != node]
+    while True:
+        candidate = _node_bounds(node, (x, y))
+        collisions = [bounds for bounds in occupied if _bounds_overlap(candidate, bounds)]
+        if not collisions:
+            node.location = (x, y)
+            return
+        # Jump below every colliding obstacle. Each iteration permanently clears
+        # at least one obstacle, so even very tall nodes cannot exhaust a search.
+        y = min(bounds[1] for bounds in collisions) - 32.0
 
 
 def apply_textures(text, replaced=None, progress=None):
@@ -178,8 +218,11 @@ def _apply_textures(text, replaced, progress=None):
             node = socket.links[0].from_node if socket.is_linked else tree.nodes.new('ShaderNodeTexImage')
             previous = node.image
             alpha = shader.inputs.get('Alpha')
-            update_alpha = (channel == 'albedo' and alpha is not None and alpha.is_linked
-                            and alpha.links[0].from_socket == node.outputs['Alpha'])
+            # Connect imported albedo alpha by default, but preserve a custom
+            # alpha graph. Existing links from this texture follow replacements.
+            update_alpha = (channel == 'albedo' and alpha is not None
+                            and (not alpha.is_linked
+                                 or alpha.links[0].from_socket == node.outputs['Alpha']))
             shared_alpha = any(not update_alpha or link.to_socket != alpha for link in node.outputs['Alpha'].links)
             if len(node.outputs['Color'].links) > 1 or shared_alpha:
                 original = node

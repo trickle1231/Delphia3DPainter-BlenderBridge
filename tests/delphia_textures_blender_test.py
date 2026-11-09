@@ -1,4 +1,5 @@
 import sys
+sys.dont_write_bytecode = True
 import json
 import hashlib
 import tempfile
@@ -6,7 +7,7 @@ from pathlib import Path
 import bpy
 sys.path.insert(0, str(Path(__file__).parents[1]))
 import delphia_clip
-from delphia_clip.textures import apply_textures, PREFIX
+from delphia_clip.textures import apply_textures, PREFIX, place_added_texture_node, _node_bounds, _bounds_overlap
 from delphia_clip.material_nodes import node_tree
 
 delphia_clip.register()
@@ -14,6 +15,46 @@ material = bpy.data.materials.new('Bridge Test')
 assert node_tree(material, create=True) is not None
 material['delphia_id'] = 'test-identity'
 shader = next(n for n in material.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+# New bridge nodes must also avoid non-texture user nodes.  This exercises the
+# placement routine directly because imports normally create their own nodes.
+layout_material = bpy.data.materials.new('Layout Obstacle Test')
+layout_tree = node_tree(layout_material, create=True)
+layout_shader = next(n for n in layout_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+layout_shader.location = (0, 0)
+obstacle = layout_tree.nodes.new('ShaderNodeTexNoise')
+obstacle.location = (-304, 0)  # Exactly where the texture would prefer to go.
+added = layout_tree.nodes.new('ShaderNodeTexImage')
+place_added_texture_node(layout_tree, added, layout_shader, 'albedo')
+assert not _bounds_overlap(_node_bounds(added), _node_bounds(obstacle))
+assert not _bounds_overlap(_node_bounds(added), _node_bounds(layout_shader))
+# Frame children must participate using world coordinates, including nesting.
+frame = layout_tree.nodes.new('NodeFrame')
+frame.location = (1000, 1000)
+layout_shader.parent = frame
+layout_shader.location = (0, 0)
+obstacle.parent = frame
+obstacle.location = (-1304, -1000)
+place_added_texture_node(layout_tree, added, layout_shader, 'albedo')
+assert added.location.x == 1000 - added.width - 64
+assert all(not _bounds_overlap(_node_bounds(added), _node_bounds(n))
+           for n in layout_tree.nodes if n != added)
+outer = layout_tree.nodes.new('NodeFrame')
+outer.location = (2000, 3000)
+frame.parent = outer
+frame.location = (1000, 1000)
+place_added_texture_node(layout_tree, added, layout_shader, 'albedo')
+assert added.location.x == 3000 - added.width - 64
+assert all(not _bounds_overlap(_node_bounds(added), _node_bounds(n))
+           for n in layout_tree.nodes if n != added)
+# Model UI dimensions without requiring a draw pass: a 5000-unit obstacle
+# previously exhausted the bounded search and overlapped the fallback position.
+from types import SimpleNamespace
+from mathutils import Vector
+tall = SimpleNamespace(type='GROUP', location=Vector((2696, 5000)),
+                       parent=None, width=400, height=5000, dimensions=(400, 5000))
+place_added_texture_node(SimpleNamespace(nodes=[added, tall]), added, layout_shader, 'albedo')
+assert added.location.y <= -32
+assert not _bounds_overlap(_node_bounds(added), _node_bounds(tall))
 with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     image = bpy.data.images.new('test image', width=4, height=4)
     image.generated_color = (0.3, 0.5, 0.8, 1)
@@ -26,6 +67,7 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     text = PREFIX + json.dumps(manifest)
     progress_values = []
     assert apply_textures(text, progress=progress_values.append) == (2, 0)
+    assert shader.inputs['Alpha'].links[0].from_socket == shader.inputs['Base Color'].links[0].from_node.outputs['Alpha']
     assert progress_values and progress_values[-1] == 100
     assert progress_values == sorted(progress_values)
     count = len(bpy.data.images)
@@ -41,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     assert albedo_node.location.x < shader.location.x
     assert emission_node.location.x < shader.location.x
     assert albedo_node.location != emission_node.location
+    assert not _bounds_overlap(_node_bounds(albedo_node), _node_bounds(emission_node))
     # ID-free local imports use exact names; duplicate IDs are never guessed.
     entry['id'] = ''
     entry['name'] = material.name
@@ -66,6 +109,15 @@ with tempfile.TemporaryDirectory(prefix='DelphiaTextures-') as folder:
     records = []
     assert apply_textures(text, records) == (2, 0)
     assert shader.inputs['Alpha'].links[0].from_node.image == shader.inputs['Base Color'].links[0].from_node.image
+    # Custom alpha wiring is not replaced by the automatic connection.
+    custom_alpha = material.node_tree.nodes.new('ShaderNodeValue')
+    material.node_tree.links.new(custom_alpha.outputs[0], shader.inputs['Alpha'])
+    assert apply_textures(text) == (2, 0)
+    assert shader.inputs['Alpha'].links[0].from_socket == custom_alpha.outputs[0]
+    # Removing that custom connection allows automatic wiring on the next import.
+    material.node_tree.links.remove(shader.inputs['Alpha'].links[0])
+    assert apply_textures(text) == (2, 0)
+    assert shader.inputs['Alpha'].links[0].from_socket == shader.inputs['Base Color'].links[0].from_node.outputs['Alpha']
     # Inject failure after mutations, verifying links, images and image count.
     import delphia_clip.textures as textures
     original_apply = textures._apply_textures
